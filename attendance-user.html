@@ -1,0 +1,71 @@
+<!-- File: attendance-user.html -->
+<style>
+  #attendance-user-container { padding: 1rem; }
+  .table-responsive { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid #dee2e6; }
+  th { background-color: #f2f2f2; }
+</style>
+
+<div id="attendance-user-container">
+  <h3>My Attendance History</h3>
+  
+  <div class="table-responsive">
+    <table id="user-attendance-table" class="table table-striped">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type (IN/OUT)</th>
+          <th>Time</th>
+          <th>Location</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="4">Loading your history...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    google.script.run
+      .withSuccessHandler(populateHistory)
+      .withFailureHandler(handleError)
+      .getUserAttendanceHistory();
+  });
+
+  function populateHistory(history) {
+    const tbody = document.getElementById('user-attendance-table').querySelector('tbody');
+    tbody.innerHTML = ''; // Clear loading message
+
+    if (!history || history.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4">No attendance history found.</td></tr>';
+      return;
+    }
+
+    history.reverse().forEach(record => { // Show most recent first
+      let mapLinkHtml = 'No Location';
+      if (record.lat && record.lng) {
+        const mapUrl = `https://www.google.com/maps?q=${record.lat},${record.lng}`;
+        mapLinkHtml = `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">View on Map</a>`;
+      }
+
+      const row = `
+        <tr>
+          <td>${record.date}</td>
+          <td>${record.type}</td>
+          <td>${record.time}</td>
+          <td>${mapLinkHtml}</td>
+        </tr>
+      `;
+      tbody.innerHTML += row;
+    });
+  }
+
+  function handleError(error) {
+    const tbody = document.getElementById('user-attendance-table').querySelector('tbody');
+    tbody.innerHTML = `<tr><td colspan="4">Error loading history: ${error.message}</td></tr>`;
+    console.error('Failed to get user history:', error);
+  }
+</script>

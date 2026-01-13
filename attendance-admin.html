@@ -1,0 +1,186 @@
+<!-- File: attendance-admin.html -->
+<style>
+  #attendance-admin-container { padding: 1rem; }
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
+  .chart-container { border: 1px solid #dee2e6; border-radius: .375rem; padding: 1rem; }
+  #attendance-log-table tbody tr { cursor: pointer; }
+  #attendance-log-table tbody tr:hover { background-color: #f8f9fa; }
+</style>
+
+<div id="attendance-admin-container">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="form-group">
+      <label for="attendance-date">Select Date:</label>
+      <input type="date" id="attendance-date" class="form-control" style="width: 200px;">
+    </div>
+  </div>
+
+  <div id="loader" class="text-center" style="display: none;">
+      <div class="spinner-border text-primary" role="status"></div>
+      <p>Loading Attendance Data...</p>
+  </div>
+
+  <div id="attendance-content">
+    <div class="charts-grid">
+      <div class="chart-container">
+        <h5 class="text-center text-secondary">Employee Check-in Locations</h5>
+        <div id="map-chart" style="width: 100%; height: 400px;"></div>
+      </div>
+      <div class="chart-container">
+        <h5 class="text-center text-secondary">Total Work Hours per Employee</h5>
+        <div id="histogram-chart" style="width: 100%; height: 400px;"></div>
+      </div>
+    </div>
+
+    <h4>Daily Logs (Click row for details)</h4>
+    <div class="table-responsive">
+      <table id="attendance-log-table" class="table table-striped">
+        <thead>
+          <tr><th>Emp ID</th><th>Name</th><th>Status</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<script>
+  google.charts.load('current', { 'packages': ['corechart', 'map', 'bar'] });
+  google.charts.setOnLoadCallback(initAdminAttendancePage);
+
+  function initAdminAttendancePage() {
+    const datePicker = document.getElementById('attendance-date');
+    datePicker.valueAsDate = new Date();
+    datePicker.addEventListener('change', fetchDataForDate);
+    fetchDataForDate();
+  }
+
+  function fetchDataForDate() {
+    const dateString = document.getElementById('attendance-date').value;
+    if (!dateString) return;
+
+    document.getElementById('loader').style.display = 'block';
+    document.getElementById('attendance-content').style.display = 'none';
+
+    google.script.run
+      .withSuccessHandler(updateAdminPage)
+      .withFailureHandler(handleAdminError)
+      .getAdminAttendanceData(dateString);
+  }
+
+  function updateAdminPage(data) {
+    document.getElementById('loader').style.display = 'none';
+    document.getElementById('attendance-content').style.display = 'block';
+
+    if (data.success) {
+      drawMapChart(data.mapData);
+      drawHoursHistogram(data.hoursData);
+      populateLogTable(data.logs);
+    } else {
+      handleAdminError({ message: data.message });
+    }
+  }
+
+  function drawMapChart(mapData) {
+    const data = google.visualization.arrayToDataTable(mapData);
+    const options = { showTooltip: true, showInfoWindow: true, useMapTypeControl: true };
+    const map = new google.visualization.Map(document.getElementById('map-chart'));
+    if (mapData.length > 1) {
+      map.draw(data, options);
+    } else {
+      document.getElementById('map-chart').innerHTML = '<div class="text-center text-muted p-5">No location data to display.</div>';
+    }
+  }
+
+  function drawHoursHistogram(hoursData) {
+    const data = google.visualization.arrayToDataTable(hoursData);
+    const options = {
+      title: 'Work Hours by Employee',
+      legend: { position: 'none' },
+      hAxis: { title: 'Employee' },
+      vAxis: { title: 'Hours' },
+      bars: 'vertical'
+    };
+    const chart = new google.visualization.ColumnChart(document.getElementById('histogram-chart'));
+    if (hoursData.length > 1) {
+        chart.draw(data, options);
+    } else {
+        document.getElementById('histogram-chart').innerHTML = '<div class="text-center text-muted p-5">No work hour data to display.</div>';
+    }
+  }
+
+  function populateLogTable(logs) {
+    const tbody = document.getElementById('attendance-log-table').querySelector('tbody');
+    tbody.innerHTML = '';
+    if (logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3">No records found.</td></tr>';
+      return;
+    }
+    const uniqueEmployees = [...new Map(logs.map(item => [item['empId'], item])).values()];
+
+    uniqueEmployees.forEach(log => {
+      const hasIn = logs.some(l => l.empId === log.empId && l.type === 'IN');
+      const hasOut = logs.some(l => l.empId === log.empId && l.type === 'OUT');
+      let statusHtml = '';
+      if(hasIn) statusHtml += '<span class="badge bg-success">IN</span> ';
+      if(hasOut) statusHtml += '<span class="badge bg-danger">OUT</span>';
+
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${log.empId}</td><td>${log.name}</td><td>${statusHtml || 'No Activity'}</td>`;
+      row.addEventListener('click', () => showEmployeeDetails(log.empId, log.name));
+      tbody.appendChild(row);
+    });
+  }
+
+  function showEmployeeDetails(empId, name) {
+    const dateString = document.getElementById('attendance-date').value;
+    const modalTitle = document.getElementById('attDetailTitle');
+    const modalBody = document.getElementById('attDetailText');
+    const modalMap = document.getElementById('attDetailMap');
+    
+    modalTitle.textContent = `Details for ${name} on ${new Date(dateString).toLocaleDateString()}`;
+    modalBody.innerHTML = 'Loading details...';
+    modalMap.innerHTML = '';
+    
+    const detailModal = new bootstrap.Modal(document.getElementById('attDetailModal'));
+    detailModal.show();
+
+    google.script.run.withSuccessHandler(data => {
+        let content = '<h5>Activity Log:</h5><ul class="list-unstyled">';
+        let inTime, outTime;
+        let locations = [['Lat', 'Lng', 'Type']];
+
+        data.forEach(log => {
+            content += `<li><span class="badge bg-${log.type === 'IN' ? 'success' : 'danger'}">${log.type}</span> at ${log.time}</li>`;
+            if (log.type === 'IN') inTime = new Date(`1970-01-01T${log.time}`);
+            if (log.type === 'OUT') outTime = new Date(`1970-01-01T${log.time}`);
+            if(log.lat && log.lng) locations.push([log.lat, log.lng, log.type]);
+        });
+        content += '</ul>';
+
+        if (inTime && outTime) {
+            const diffMs = outTime - inTime;
+            const hours = (diffMs / 3600000).toFixed(2);
+            content += `<h5>Total Hours: ${hours}</h5>`;
+        }
+        modalBody.innerHTML = content;
+
+        if(locations.length > 1) {
+          const mapData = google.visualization.arrayToDataTable(locations);
+          const map = new google.visualization.Map(modalMap);
+          map.draw(mapData, {showTooltip: true, showInfoWindow: true});
+        } else {
+          modalMap.innerHTML = '<div class="alert alert-warning">No location data recorded.</div>';
+        }
+
+    }).getEmployeeDailyDetails(empId, dateString);
+  }
+
+  function handleAdminError(error) {
+    document.getElementById('loader').style.display = 'none';
+    const contentArea = document.getElementById('attendance-content');
+    contentArea.style.display = 'block';
+    contentArea.innerHTML = `<div class="alert alert-danger">Error loading data: ${error.message}</div>`;
+  }
+</script>

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>WebVeer Automation HRMS</title>
+    <!-- Dependencies -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <?!= include('css'); ?>
+</head>
+<body>
+
+    <input type="hidden" id="initialPage" value="<?= initialPage ?>">
+
+    <!-- TOAST NOTIFICATION SYSTEM -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 2000;">
+        <div id="liveToast" class="toast align-items-center text-white border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body" id="toastMessage">...</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    </div>
+
+    <? if (!isSetup) { ?>
+        <!-- INSTALLATION SCREEN -->
+        <div class="vh-100 d-flex justify-content-center align-items-center bg-light">
+            <div class="card p-5 text-center shadow border-0" style="max-width:500px">
+                <h1 class="text-primary fw-bold">WEBVEER AUTOMATION</h1>
+                <p class="text-muted mb-4">HRMS Installation Wizard</p>
+                <div class="alert alert-info">No database found.</div>
+                <button class="btn btn-primary w-100 py-2" onclick="runSetup_(this)">
+                    <i class="bi bi-database-add"></i> Initialize Database
+                </button>
+                <div id="setupMsg" class="mt-3"></div>
+            </div>
+        </div>
+    <? } else { ?>
+        <!-- APP LAYOUT -->
+        <div class="d-flex" id="wrapper">
+            <!-- Sidebar -->
+            <div class="bg-dark text-white" id="sidebar-wrapper">
+                <div class="sidebar-heading py-4 text-center border-bottom border-secondary">
+                    WEBVEER
+                    <div class="small text-white-50" style="font-size:0.7rem">AUTOMATION & SERVICE PVT LTD</div>
+                </div>
+                <div class="list-group list-group-flush my-3" id="sidebarMenu"></div>
+                <div class="mt-auto p-3 border-top border-secondary bg-black bg-opacity-25">
+                    <small class="text-white-50 d-block">Logged in as</small>
+                    <span id="userNameDisplay" class="fw-bold d-block text-truncate">User</span>
+                    <span id="roleBadge" class="badge bg-primary">...</span>
+                    <span id="versionBadge" class="badge bg-secondary">...</span>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div id="page-content-wrapper">
+                <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom px-4 sticky-top shadow-sm">
+                    <button class="btn btn-light me-3" id="menu-toggle"><i class="bi bi-list"></i></button>
+                    <h5 class="m-0 fw-bold text-secondary" id="pageTitle">Dashboard</h5>
+                </nav>
+
+                <div class="container-fluid p-4" id="mainView">
+                    <div class="text-center mt-5">
+                        <div class="spinner-border text-primary"></div>
+                        <p class="text-muted mt-2">Authenticating Secure Environment...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <? } ?>
+
+    <!-- BOOTSTRAP BUNDLE -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <?!= include('js'); ?>
+</body>
+</html>

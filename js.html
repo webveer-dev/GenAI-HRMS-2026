@@ -1,0 +1,955 @@
+<script>
+    let CURRENT_USER = {};
+    let dashboardTimeInterval = null;
+    const bsToast = new bootstrap.Toast(document.getElementById('liveToast'));
+
+    document.addEventListener("DOMContentLoaded", () => {
+        if(document.getElementById('wrapper')) {
+            document.getElementById("menu-toggle").onclick = () => document.getElementById("wrapper").classList.toggle("toggled");
+            initApp_();
+        }
+    });
+
+    // --- UTILS ---
+    function showToast_(msg, isSuccess=true) {
+        const el = document.getElementById('liveToast');
+        document.getElementById('toastMessage').textContent = msg;
+        el.className = `toast align-items-center text-white border-0 ${isSuccess?'bg-success':'bg-danger'}`;
+        bsToast.show();
+    }
+
+    function runSetup_(btn) {
+        btn.innerHTML = 'Creating DB...'; btn.disabled = true;
+        google.script.run.withSuccessHandler(r => {
+            if(r.success) document.getElementById('setupMsg').innerHTML = `<div class="alert alert-success">Done! <a href="${r.url}" target="_blank">View Sheet</a>. Refresh page.</div>`;
+        }).setupSystem();
+    }
+
+    // --- MAIN INIT ---
+    function initApp_() {
+        google.script.run.withSuccessHandler(user => {
+            if (!user || user.error) {
+                const errorMessage = user ? user.error : 'Connection Failed';
+                document.getElementById('mainView').innerHTML = `<div class="alert alert-danger p-5 text-center shadow"><h4>Access Denied</h4><p>${errorMessage}</p><p class="text-muted">Ask Admin to add <b>${user && user.Email ? user.Email : 'your email'}</b> to 'Employees'.</p></div>`;
+                showToast_(errorMessage, false);
+                return;
+            }
+            CURRENT_USER = user;
+            document.getElementById('userNameDisplay').textContent = user.Name.split(" ")[0];
+            document.getElementById('roleBadge').textContent = user.Role;
+            document.getElementById('versionBadge').textContent = 'v2.1.0';
+            renderMenu_();
+            
+            // Router Init
+            const p = document.getElementById('initialPage').value || 'dashboard';
+                        router_(null, p, 'Dashboard Overview', false); 
+            window.onpopstate = (e) => { if(e.state)             router_(null, e.state.page, '', false); };
+        }).getActiveUserContext();
+    }
+
+    // --- ROUTER (Fixes 'Unsafe' error by preventing default link nav) ---
+    function router_(e, page, title, push=true) {
+        if(e) e.preventDefault();
+        if (dashboardTimeInterval) clearInterval(dashboardTimeInterval); // Clear any existing clock intervals
+        if(push) window.history.pushState({page: page}, "", `?page=${page}`);
+        document.getElementById('pageTitle').innerText = title;
+
+        switch(page) {
+            case 'dashboard': loadDashboard(); break;
+            case 'attendance': loadAttHistory(); break;
+            case 'profile': loadProfile(); break;
+            case 'leaves': loadLeaves(); break;
+            case 'holidays': loadHolidays(); break;
+            case 'documents': loadDocuments(); break;
+            case 'announcements': loadAnnouncements(); break;
+            case 'hrforms': loadHrForms(); break;
+            case 'employees': loadEmployees(); break;
+            case 'assets': loadAssets(); break;
+            case 'payroll': loadPayroll(); break;
+            case 'logs': loadLogs(); break;
+            case 'user_guide': loadUserGuide(); break;
+            default: loadDashboard();
+        }
+    }
+
+    function renderMenu_() {
+        const m = document.getElementById('sidebarMenu');
+        const lnk = (id, icn, txt) => `<a href="#" onclick="router_(event, '${id}', '${txt}')" class="list-group-item list-group-item-action bg-transparent text-light"><i class="bi bi-${icn} me-3"></i>${txt}</a>`;
+        const actionLnk = (action, icn, txt) => `<a href="#" onclick="event.preventDefault(); ${action}" class="list-group-item list-group-item-action bg-transparent text-light"><i class="bi bi-${icn} me-3"></i>${txt}</a>`;
+        let h = lnk('dashboard','speedometer2','Dashboard') + lnk('profile','person-circle','My Profile') + lnk('attendance','calendar-check','Attendance') + lnk('leaves','calendar2-heart','Leaves') + lnk('holidays', 'calendar-event', 'Holidays') + lnk('announcements', 'megaphone', 'Announcements') + lnk('user_guide', 'info-circle', 'User Guide');
+        
+        if(CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR') {
+            h += `<div class="sidebar-heading small text-white-50 px-3 mt-3">ADMINISTRATION</div>` + lnk('employees','people-fill','Employees') + lnk('assets', 'box', 'Assets') + lnk('payroll', 'cash-stack', 'Payroll');
+        }
+
+        if(CURRENT_USER.Role === 'ADMIN') {
+            h += `<div class="sidebar-heading small text-white-50 px-3 mt-3">SUPER ADMIN</div>` + 
+                 lnk('documents', 'file-earmark', 'My Documents') + 
+                 lnk('hrforms', 'file-text', 'HR Forms') +
+                 lnk('logs','activity','System Logs') + 
+                 actionLnk('accrueMonthlyLeave_()', 'calendar-plus', 'Accrue Monthly Leave') +
+                 actionLnk('applyYearlyCarryOver_()', 'box-arrow-down', 'Apply Yearly Carry-over');
+        }
+
+        m.innerHTML = h;
+    }
+
+    function accrueMonthlyLeave_() {
+        if (confirm("Are you sure you want to accrue prorated monthly leave for all employees? This will add leaves based on the number of days passed since the last accrual.")) {
+            showToast_("Accruing prorated monthly leave...", true);
+            google.script.run.withSuccessHandler(r => {
+                showToast_(r.msg, r.success);
+            }).accrueMonthlyLeave();
+        }
+    }
+
+    function applyYearlyCarryOver_() {
+        if (confirm("Are you sure you want to apply yearly carry-over for all employees? This will carry over 50% of the remaining leaves and add 1 CL bonus. This should be done only once at the beginning of the year.")) {
+            showToast_("Applying yearly carry-over...", true);
+            google.script.run.withSuccessHandler(r => {
+                showToast_(r.msg, r.success);
+            }).applyYearlyCarryOver();
+        }
+    }
+
+    // --- VIEWS ---
+    
+    function updateDashboardTime_() {
+        google.script.run.withSuccessHandler(serverTime => {
+            const timeEl = document.getElementById('dashboard-time');
+            if (timeEl) {
+                timeEl.innerHTML = `<strong>${serverTime.date}</strong><br>${serverTime.time}`;
+            }
+        }).getServerTime();
+    }
+
+    function calculateTenure_(dojString) {
+        if (!dojString) return 'N/A';
+        const doj = new Date(dojString);
+        const now = new Date();
+        let years = now.getFullYear() - doj.getFullYear();
+        let months = now.getMonth() - doj.getMonth();
+        let days = now.getDate() - doj.getDate();
+
+        if (days < 0) {
+            months--;
+            const priorMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+            days += priorMonth.getDate();
+        }
+        if (months < 0) {
+            years--;
+            months += 12;
+        }
+        return `${years} years, ${months} months, ${days} days`;
+    }
+    
+    function loadDashboard() {
+        if(CURRENT_USER.Role === 'ADMIN') {
+             google.script.run.withSuccessHandler(s => {
+                 // Safely handle potentially missing arrays using || []
+                 const logs = s.logs || [];
+                 const news = s.announcements || [];
+                 
+                 document.getElementById('mainView').innerHTML = `
+                 <div class="row g-3">
+                    <div class="col-md-3"><div class="card p-3 bg-primary text-white shadow-sm border-0"><h3>${s.empCount}</h3><small>Total Employees</small></div></div>
+                    <div class="col-md-3"><div class="card p-3 bg-warning text-dark shadow-sm border-0"><h3>${s.pendingLeaves}</h3><small>Pending Leaves</small></div></div>
+                 </div>
+                 <div class="row mt-4">
+                    <div class="col-md-6"><div class="card shadow-sm border-0"><div class="card-header bg-white fw-bold">Recent Logs</div><ul class="list-group list-group-flush small">
+                        ${logs.length? logs.map(l=>`<li class="list-group-item">${l.Action} <span class="text-muted float-end">${l.Timestamp}</span></li>`).join('') : '<li class="list-group-item">No logs</li>'}
+                    </ul></div></div>
+                 </div>`;
+             }).getDashboardStats();
+        } else {
+             const tenure = calculateTenure_(CURRENT_USER.DOJ);
+             document.getElementById('mainView').innerHTML = `
+             <div class="row justify-content-center mt-4">
+                <div class="col-md-6 text-center">
+                    <div class="card shadow p-4 border-0">
+                         <h4 class="mb-4 text-primary fw-bold">Daily Attendance</h4>
+                         <div class="d-flex justify-content-center gap-3">
+                             <button class="btn btn-lg btn-success w-50" onclick="markAtt_('CheckIn', this)">Check In</button>
+                             <button class="btn btn-lg btn-danger w-50" onclick="markAtt_('CheckOut', this)">Check Out</button>
+                         </div>
+                         <div id="dashboard-time" class="mt-4 text-secondary"></div>
+                         <div id="gpsMsg" class="mt-3 text-muted small"></div>
+                    </div>
+                    <div class="card shadow p-3 border-0 mt-3">
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <small class="text-muted">Check In</small>
+                                <p class="fw-bold" id="checkInTime">--:--</p>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Check Out</small>
+                                <p class="fw-bold" id="checkOutTime">--:--</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card shadow p-3 border-0 mt-3">
+                        <small class="text-muted">Date of Joining</small>
+                        <p class="fw-bold">${CURRENT_USER.DOJ}</p>
+                        <small class="text-muted">Current Tenure</small>
+                        <p class="fw-bold">${tenure}</p>
+                    </div>
+                </div>
+            </div>`;
+            updateDashboardTime_();
+            dashboardTimeInterval = setInterval(updateDashboardTime_, 1000);
+
+            google.script.run.withSuccessHandler(att => {
+                if (att) {
+                    document.getElementById('checkInTime').innerText = att.checkIn || '--:--';
+                    document.getElementById('checkOutTime').innerText = att.checkOut || '--:--';
+                }
+            }).getTodaysAttendance();
+        }
+    }
+
+    function markAtt_(type, btn) {
+        btn.disabled=true; document.getElementById('gpsMsg').innerText = "Locating...";
+        if(!navigator.geolocation) { showToast_("No GPS Support",false); return; }
+        navigator.geolocation.getCurrentPosition(
+            p => {
+                google.script.run.withSuccessHandler(r=>{
+                    showToast_(r.msg, r.success);
+                    btn.disabled=false;
+                    document.getElementById('gpsMsg').innerText="";
+                    if(r.success) {
+                        loadDashboard();
+                    }
+                }).markAttendance(type, {lat:p.coords.latitude, lng:p.coords.longitude});
+            }, 
+            e => { showToast_("GPS Access Denied", false); btn.disabled=false; }
+        );
+    }
+
+    function loadProfile() {
+        document.getElementById('mainView').innerHTML = `
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">My Profile</h5>
+                    </div>
+                    <div class="card-body">
+                        <form onsubmit="saveProfile_(event)">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted">Name</label>
+                                    <p class="form-control-plaintext">${CURRENT_USER.Name}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted">Employee ID</label>
+                                    <p class="form-control-plaintext">${CURRENT_USER.EmpID}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted">Email</label>
+                                    <p class="form-control-plaintext">${CURRENT_USER.Email}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label text-muted">Department</label>
+                                    <p class="form-control-plaintext">${CURRENT_USER.Department || 'N/A'}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="mobile" class="form-label">Mobile Number</label>
+                                    <input type="tel" id="mobile" name="mobile" class="form-control" value="${CURRENT_USER.Mobile || ''}" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="dob" class="form-label">Date of Birth</label>
+                                    <input type="date" id="dob" name="dob" class="form-control" value="${CURRENT_USER.DOB || ''}" required>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary mt-4">Save Changes</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function saveProfile_(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button');
+        btn.disabled = true;
+        btn.innerHTML = 'Saving...';
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if (r.success) {
+                // Refresh user context to get the latest data
+                google.script.run.withSuccessHandler(user => {
+                    CURRENT_USER = user;
+                    loadProfile();
+                }).getActiveUserContext();
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = 'Save Changes';
+            }
+        }).updateUserProfile(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function loadHolidays() {
+        document.getElementById('mainView').innerHTML = '<div class="card"><div class="card-body table-responsive"><table class="table" id="tHol"><thead><tr><th>Date</th><th>Title</th><th>Type</th></tr></thead><tbody></tbody></table></div></div>';
+        google.script.run.withSuccessHandler(d => {
+            document.querySelector('#tHol tbody').innerHTML = d.map(r => `<tr><td>${r.Date}</td><td>${r.Title}</td><td>${r.Type}</td></tr>`).join('');
+        }).getData('Holidays');
+    }
+
+    function loadDocuments() {
+
+        let empSelect = '';
+        if (CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR') {
+            google.script.run.withSuccessHandler(employees => {
+                const empOptions = employees.map(e => `<option value="${e.EmpID}">${e.Name}</option>`).join('');
+                document.querySelector('select[name="empId"]').innerHTML = empOptions;
+            }).getEmployees();
+            empSelect = `<select name="empId" class="form-select mb-2" required></select>`;
+        }
+
+        document.getElementById('mainView').innerHTML = `
+        <div class="row">
+            <div class="col-md-4 mb-3">
+                <div class="card shadow-sm p-3">
+                    <h5>Add Document Link</h5>
+                    <form onsubmit="sendDocument_(event)">
+                        ${empSelect}
+                        <input type="text" name="name" class="form-control mb-2" placeholder="Document Name" required>
+                        <input type="text" name="type" class="form-control mb-2" placeholder="Document Type (e.g. Payslip)" required>
+                        <input type="url" name="url" class="form-control mb-2" placeholder="Google Drive Link" required>
+                        <button class="btn btn-primary w-100">Add</button>
+                    </form>
+                </div>
+            </div>
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="table-responsive">
+                    <table class="table mb-0" id="tDoc">
+                        <thead><tr><th>Name</th><th>Type</th><th>Link</th><th>Uploaded</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        
+        google.script.run.withSuccessHandler(d => {
+             document.querySelector('#tDoc tbody').innerHTML = d.reverse().map(l => {
+                 return `<tr><td>${l.FileName}</td><td>${l.DocumentType}</td><td><a href="${l.FileURL}" target="_blank">View</a></td><td>${l.UploadDate}</td></tr>`;
+             }).join('');
+        }).getDocuments();
+    }
+
+    function sendDocument_(e) {
+        e.preventDefault();
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if(r.success) loadDocuments();
+        }).submitDocument(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function loadHrForms() {
+        document.getElementById('mainView').innerHTML = `<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading Forms...</p></div>`;
+
+        const p1 = new Promise(r => google.script.run.withSuccessHandler(r).getTemplates());
+        const p2 = new Promise(r => google.script.run.withSuccessHandler(r).getGeneratedDocumentDataForUser());
+        const p3 = new Promise(r => google.script.run.withSuccessHandler(r).getEmployees());
+
+        Promise.all([p1, p2, p3]).then(data => {
+            const templates = data[0];
+            const docData = data[1];
+            const employees = data[2];
+
+            const myDocs = docData.my_docs || [];
+            const teamDocs = docData.team_docs || [];
+
+            const templateCards = templates.map(t => `
+                <div class="col-md-4">
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h5 class="card-title">${t.Title}</h5>
+                            <button class="btn btn-primary" onclick="renderTemplateForm_('${t.TemplateID}')">Fill Form</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            const userDocsRows = myDocs.map(d => `
+                <tr>
+                    <td>${templates.find(t=>t.TemplateID === d.TemplateID)?.Title || d.TemplateID}</td>
+                    <td>${d.CreatedDate}</td>
+                    <td><span class="badge bg-info">${d.Status}</span></td>
+                    <td>
+                        ${(d.Status === 'Approved' && !d.FileURL) ? `<button class="btn btn-sm btn-success" onclick="generatePdf_('${d.GeneratedDocID}')">Generate PDF</button>` : ''}
+                        ${(d.FileURL) ? `<a href="${d.FileURL}" target="_blank" class="btn btn-sm btn-secondary">View PDF</a>` : ''}
+                    </td>
+                </tr>
+            `).join('');
+
+            const approvalRows = teamDocs.map(d => {
+                const empName = employees.find(e => e.EmpID === d.EmpID)?.Name || d.EmpID;
+                return `
+                <tr>
+                    <td>${d.GeneratedDocID}</td>
+                    <td>${empName}</td>
+                    <td>${templates.find(t=>t.TemplateID === d.TemplateID)?.Title || d.TemplateID}</td>
+                    <td>${d.CreatedDate}</td>
+                    <td><button class="btn btn-sm btn-success" onclick="approveDoc_('${d.GeneratedDocID}')">Approve</button></td>
+                </tr>
+            `}).join('');
+
+            let approvalTable = '';
+            if (teamDocs.length > 0) {
+                approvalTable = `
+                <div class="card mt-4">
+                    <div class="card-header">Pending Approvals</div>
+                    <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead><tr><th>Doc ID</th><th>Employee</th><th>Form</th><th>Created</th><th>Action</th></tr></thead>
+                        <tbody>${approvalRows}</tbody>
+                    </table>
+                    </div>
+                </div>`;
+            }
+
+            document.getElementById('mainView').innerHTML = `
+            <div id="form-container">
+                <h5>Available Forms</h5>
+                <div class="row">${templateCards}</div>
+                <hr class="my-4">
+                <h5>My Generated Documents</h5>
+                <div class="card">
+                    <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead><tr><th>Form</th><th>Created</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>${userDocsRows}</tbody>
+                    </table>
+                    </div>
+                </div>
+                ${approvalTable}
+            </div>
+            <div id="fill-form-container" class="d-none"></div>
+            `;
+        });
+    }
+
+    function renderTemplateForm_(templateId) {
+        google.script.run.withSuccessHandler(templates => {
+            const template = templates.find(t => t.TemplateID === templateId);
+            if (!template) {
+                showToast_('Template not found', false);
+                return;
+            }
+
+            document.getElementById('form-container').classList.add('d-none');
+            const formContainer = document.getElementById('fill-form-container');
+            formContainer.classList.remove('d-none');
+
+            // Simple regex to find {{placeholders}}
+            const placeholders = template.Content.match(/{{(.*?)}}/g) || [];
+            const fields = placeholders.map(p => p.replace(/{{|}}/g, '')).filter(p => p !== 'current_date' && p !== 'employee_name');
+
+            const formFields = fields.map(f => `
+                <div class="mb-3">
+                    <label for="${f}" class="form-label">${f.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</label>
+                    <input type="text" class="form-control" id="${f}" name="${f}" required>
+                </div>
+            `).join('');
+
+            formContainer.innerHTML = `
+                <div class="card">
+                    <div class="card-header">
+                        <h5>${template.Title}</h5>
+                        <button class="btn-close" onclick="loadHrForms()"></button>
+                    </div>
+                    <div class="card-body">
+                        <form onsubmit="fillTemplate_(event, '${templateId}')">
+                            ${formFields}
+                            <button type="submit" class="btn btn-primary">Submit for Approval</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }).getTemplates();
+    }
+
+    function fillTemplate_(e, templateId) {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData.entries());
+        
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if (r.success) {
+                loadHrForms();
+            }
+        }).fillTemplate({templateId: templateId, data: data});
+    }
+
+    function approveDoc_(docId) {
+        if (!confirm('Are you sure you want to approve this document?')) return;
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if (r.success) {
+                loadHrForms();
+            }
+        }).approveGeneratedDocument(docId);
+    }
+
+    function generatePdf_(docId) {
+        showToast_('Generating PDF...');
+        google.script.run.withSuccessHandler(r => {
+            if (r.success) {
+                showToast_('PDF Generated!', true);
+                window.open(r.url, '_blank');
+                loadHrForms();
+            } else {
+                showToast_(r.msg, false);
+            }
+        }).generatePdf(docId);
+    }
+    
+    function loadAnnouncements() {
+        let adminForm = '';
+        if (CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR') {
+            adminForm = `
+            <div class="col-md-4 mb-3">
+                <div class="card shadow-sm p-3">
+                    <h5>New Announcement</h5>
+                    <form onsubmit="sendAnnouncement_(event)">
+                        <input type="text" name="title" class="form-control mb-2" placeholder="Title" required>
+                        <textarea name="message" class="form-control mb-2" placeholder="Message" required></textarea>
+                        <button class="btn btn-primary w-100">Post</button>
+                    </form>
+                </div>
+            </div>`;
+        }
+
+        document.getElementById('mainView').innerHTML = `
+        <div class="row">
+            ${adminForm}
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">Recent Announcements</div>
+                    <div id="announcementList" class="list-group list-group-flush"></div>
+                </div>
+            </div>
+        </div>`;
+        
+        google.script.run.withSuccessHandler(d => {
+             document.getElementById('announcementList').innerHTML = d.reverse().map(a => {
+                 return `<div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h5 class="mb-1">${a.Title}</h5>
+                                <small>${a.Date}</small>
+                            </div>
+                            <p class="mb-1">${a.Message}</p>
+                            <small>Posted by: ${a.PostedBy}</small>
+                         </div>`;
+             }).join('');
+        }).getData('Announcements');
+    }
+
+    function sendAnnouncement_(e) {
+        e.preventDefault();
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if(r.success) loadAnnouncements();
+        }).createAnnouncement(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function loadLeaves() {
+        document.getElementById('mainView').innerHTML = `<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading Leaves...</p></div>`;
+
+        google.script.run.withSuccessHandler(user => {
+            CURRENT_USER = user;
+            
+            google.script.run.withSuccessHandler(leaveData => {
+                const myLeaves = leaveData.my_leaves || [];
+                const teamLeaves = leaveData.team_leaves || [];
+
+                const pendingCLDays = myLeaves
+                    .filter(l => l.Status === 'Pending' && l.Type.includes('Casual'))
+                    .reduce((acc, l) => acc + l.Days, 0);
+
+                let adjustedCL = (CURRENT_USER.BalCL || 0) - pendingCLDays;
+                adjustedCL = Math.round(adjustedCL * 100) / 100;
+
+                const myLeavesRows = myLeaves.reverse().map(l => {
+                     return `<tr><td>${l.Type}<br><small>${l.Name}</small></td><td>${l.StartDate} to ${l.EndDate}</td><td><span class="badge bg-secondary">${l.Status}</span></td><td>${l.Days}</td></tr>`;
+                 }).join('');
+
+                let teamLeavesTable = '';
+                if (teamLeaves.length > 0) {
+                    const teamLeavesRows = teamLeaves.map(l => {
+                        let btn = `<button class="btn btn-sm btn-success" onclick="approveLev_('${l.RequestID}')">Approve</button>`;
+                        return `<tr><td>${l.Name}</td><td>${l.Type}</td><td>${l.StartDate} to ${l.EndDate}</td><td>${l.Days}</td><td>${btn}</td></tr>`;
+                    }).join('');
+
+                    teamLeavesTable = `
+                    <div class="card mt-4">
+                        <div class="card-header">Team Leave Requests</div>
+                        <div class="table-responsive">
+                        <table class="table mb-0">
+                            <thead><tr><th>Employee</th><th>Type</th><th>Dates</th><th>Days</th><th>Action</th></tr></thead>
+                            <tbody>${teamLeavesRows}</tbody>
+                        </table>
+                        </div>
+                    </div>`;
+                }
+
+                document.getElementById('mainView').innerHTML = `
+                <div class="row mb-4 g-3 text-center">
+                    <div class="col-3"><div class="card bg-success text-white p-2">CL <h3>${adjustedCL}</h3></div></div>
+                    <div class="col-3"><div class="card bg-info text-white p-2">SL <h3>${CURRENT_USER.BalSL||0}</h3></div></div>
+                    <div class="col-3"><div class="card bg-warning p-2">PL <h3>${CURRENT_USER.BalPat||0}</h3></div></div>
+                    <div class="col-3"><div class="card bg-danger text-white p-2">ML <h3>${CURRENT_USER.BalMat||0}</h3></div></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="card shadow-sm p-3">
+                            <h5>Apply for Leave</h5>
+                            <form onsubmit="sendLeave_(event)">
+                                <select name="type" class="form-select mb-2" required><option>Casual Leave (CL)</option><option>Sick Leave (SL)</option><option>Paternity Leave</option><option>Maternity Leave</option></select>
+                                <select name="session" class="form-select mb-2" required onchange="handleSessionChange(this)">
+                                    <option>Full Day</option>
+                                    <option>First Half</option>
+                                    <option>Second Half</option>
+                                </select>
+                                <input type="date" id="leaveStartDate" name="start" class="form-control mb-2" required onchange="updateEndDateMin(); calculateDays_();">
+                                <input type="date" id="leaveEndDate" name="end" class="form-control mb-2" required onchange="calculateDays_();">
+                                <textarea name="reason" class="form-control mb-2" placeholder="Reason"></textarea>
+                                <div class="alert alert-info" id="leaveDaysDisplay" style="display: none;"></div>
+                                <button class="btn btn-primary w-100" id="sendLeaveBtn" disabled>Send</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="card">
+                             <div class="card-header">My Leave History</div>
+                            <div class="table-responsive">
+                            <table class="table mb-0">
+                                <thead><tr><th>Type</th><th>Dates</th><th>Status</th><th>Days</th></tr></thead>
+                                <tbody>${myLeavesRows}</tbody>
+                            </table>
+                            </div>
+                        </div>
+                        ${teamLeavesTable}
+                    </div>
+                </div>`;
+            }).getLeaveDataForUser();
+        }).getActiveUserContext();
+    }
+
+    function updateEndDateMin() {
+        const startDate = document.getElementById('leaveStartDate').value;
+        if (startDate) {
+            document.getElementById('leaveEndDate').min = startDate;
+        }
+    }
+
+    function calculateDays_() {
+        const form = document.querySelector('form[onsubmit="sendLeave_(event)"]');
+        const startDate = form.querySelector('input[name="start"]').value;
+        const endDate = form.querySelector('input[name="end"]').value;
+        const leaveDaysDisplay = document.getElementById('leaveDaysDisplay');
+        const sendLeaveBtn = document.getElementById('sendLeaveBtn');
+        sendLeaveBtn.disabled = true;
+
+        if (startDate && endDate) {
+            if (new Date(endDate) < new Date(startDate)) {
+                leaveDaysDisplay.style.display = 'block';
+                leaveDaysDisplay.innerText = 'End date cannot be before start date.';
+                leaveDaysDisplay.classList.remove('alert-info');
+                leaveDaysDisplay.classList.add('alert-danger');
+                return;
+            }
+            leaveDaysDisplay.classList.remove('alert-danger');
+            leaveDaysDisplay.classList.add('alert-info');
+            google.script.run.withSuccessHandler(days => {
+                leaveDaysDisplay.style.display = 'block';
+                leaveDaysDisplay.innerText = `This will deduct ${days} working days.`;
+                if (days > 0) {
+                    sendLeaveBtn.disabled = false;
+                }
+            }).calculateLeaveDays(startDate, endDate);
+        } else {
+            leaveDaysDisplay.style.display = 'none';
+        }
+    }
+
+    function handleSessionChange(select) {
+        const form = select.form;
+        const endDateInput = form.querySelector('input[name="end"]');
+        if (select.value !== 'Full Day') {
+            endDateInput.value = form.querySelector('input[name="start"]').value;
+            endDateInput.disabled = true;
+        } else {
+            endDateInput.disabled = false;
+        }
+    }
+    
+    document.addEventListener('change', function(e){
+        if(e.target.name === 'start' && e.target.form.session.value !== 'Full Day'){
+            e.target.form.end.value = e.target.value;
+        }
+    });
+    
+    function sendLeave_(e) { e.preventDefault(); google.script.run.withSuccessHandler(r => { showToast_(r.msg, r.success); if(r.success) loadLeaves(); }).submitLeave(Object.fromEntries(new FormData(e.target))); }
+    function approveLev_(id) { if(confirm("Approve & Deduct Balance?")) google.script.run.withSuccessHandler(r=>{ showToast_(r.msg,r.success); loadLeaves(); }).approveLeave(id); }
+
+    function loadEmployees() {
+
+        const p1 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Employees'));
+
+        p1.then(employees => {
+            const empRows = employees.map(r => `<tr><td>${r.EmpID}</td><td>${r.Name}</td><td>${r.Email}</td><td>${r.BalCL}/${r.BalSL}</td></tr>`).join('');
+            const managerOptions = employees.map(r => `<option value="${r.EmpID}">${r.Name}</option>`).join('');
+
+            document.getElementById('mainView').innerHTML = `
+            <div class="card">
+                <div class="card-header bg-white"><button class="btn btn-primary btn-sm float-end" onclick="new bootstrap.Modal('#mdlEmp').show()">+ Add New</button></div>
+                <div class="card-body table-responsive"><table class="table" id="tEmp"><thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Bal(CL/SL)</th></tr></thead><tbody>${empRows}</tbody></table></div>
+            </div>
+            <div class="modal fade" id="mdlEmp"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5>New Employee</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body"><form onsubmit="saveEmp_(event)">
+                <div class="row g-2">
+                    <div class="col-6"><input name="empId" class="form-control" placeholder="ID" required></div>
+                    <div class="col-6"><input name="name" class="form-control" placeholder="Name" required></div>
+                    <div class="col-12"><input name="email" type="email" class="form-control" placeholder="Google Email" required></div>
+                    <div class="col-6"><select name="role" class="form-select"><option>USER</option><option>ADMIN</option><option>HR</option></select></div>
+                    <div class="col-6"><input name="mobile" class="form-control" placeholder="Mobile"></div>
+                    <div class="col-6"><input name="dept" class="form-control" placeholder="Department"></div>
+                    <div class="col-6"><input name="desig" class="form-control" placeholder="Designation"></div>
+                    <div class="col-6"><label class="form-label small">DOJ</label><input name="doj" type="date" class="form-control" required></div>
+                    <div class="col-6"><label class="form-label small">Manager</label><select name="managerId" class="form-select">${managerOptions}</select></div>
+                <button class="btn btn-primary w-100 mt-3">Create</button></div></form></div></div></div></div>`;
+        });
+    }
+    function saveEmp_(e) { e.preventDefault(); google.script.run.withSuccessHandler(r => { showToast_(r.msg,r.success); bootstrap.Modal.getInstance(document.querySelector('#mdlEmp')).hide(); loadEmployees(); }).createEmployee(Object.fromEntries(new FormData(e.target))); }
+
+    function loadAssets() {
+        if (CURRENT_USER.Role !== 'ADMIN') {
+            document.getElementById('mainView').innerHTML = '<div class="alert alert-danger">Access Denied</div>';
+            return;
+        }
+        document.getElementById('mainView').innerHTML = `<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading Assets...</p></div>`;
+
+        const p1 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Assets'));
+        const p2 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Employees'));
+
+        Promise.all([p1, p2]).then(data => {
+            const assets = data[0];
+            const employees = data[1];
+
+            const assetOptions = assets.filter(r => r.Status === 'Available').map(r => `<option value="${r.AssetID}">${r.Model} (${r.SerialNo})</option>`).join('');
+            const empOptions = employees.map(r => `<option value="${r.EmpID}">${r.Name}</option>`).join('');
+            const assetRows = assets.map(r => `<tr><td>${r.AssetID}</td><td>${r.Type}</td><td>${r.Model}</td><td>${r.SerialNo}</td><td>${r.AssignedTo}</td><td>${r.Status}</td></tr>`).join('');
+
+            document.getElementById('mainView').innerHTML = `
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="card shadow-sm mb-3">
+                        <div class="card-header">Add New Asset</div>
+                        <div class="card-body">
+                            <form onsubmit="saveAsset_(event)">
+                                <input type="text" name="type" class="form-control mb-2" placeholder="Type (e.g. Laptop)" required>
+                                <input type="text" name="model" class="form-control mb-2" placeholder="Model" required>
+                                <input type="text" name="serial" class="form-control mb-2" placeholder="Serial Number" required>
+                                <button class="btn btn-primary w-100">Add Asset</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="card shadow-sm">
+                        <div class="card-header">Assign Asset</div>
+                        <div class="card-body">
+                            <form onsubmit="assignAsset_(event)">
+                                <select name="assetId" class="form-select mb-2" required>${assetOptions}</select>
+                                <select name="empId" class="form-select mb-2" required>${empOptions}</select>
+                                <button class="btn btn-success w-100">Assign</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-8">
+                                    <div class="card">
+                                        <div class="card-header">Asset List</div>
+                                        <div class="table-responsive">
+                                        <table class="table mb-0" id="tAsset">
+                                            <thead><tr><th>ID</th><th>Type</th><th>Model</th><th>Serial</th><th>Assigned To</th><th>Status</th></tr></thead>
+                                            <tbody>${assetRows}</tbody>
+                                        </table>
+                                        </div>
+                                    </div>                </div>
+            </div>`;
+        });
+    }
+
+    function saveAsset_(e) {
+        e.preventDefault();
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if(r.success) loadAssets();
+        }).createAsset(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function assignAsset_(e) {
+        e.preventDefault();
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if(r.success) loadAssets();
+        }).assignAsset(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function loadPayroll() {
+        if (CURRENT_USER.Role !== 'ADMIN') {
+            document.getElementById('mainView').innerHTML = '<div class="alert alert-danger">Access Denied</div>';
+            return;
+        }
+        document.getElementById('mainView').innerHTML = `<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading Payroll...</p></div>`;
+
+        const p1 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Payroll'));
+        const p2 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Employees'));
+
+        Promise.all([p1, p2]).then(data => {
+            const payroll = data[0];
+            const employees = data[1];
+
+            const empOptions = employees.map(r => `<option value="${r.EmpID}">${r.Name}</option>`).join('');
+            const payrollRows = payroll.map(r => `<tr><td>${r.PayslipID}</td><td>${r.EmpID}</td><td>${r.Month}/${r.Year}</td><td>${r.NetPay}</td><td>${r.GenDate}</td></tr>`).join('');
+
+            document.getElementById('mainView').innerHTML = `
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="card shadow-sm mb-3">
+                        <div class="card-header">Generate Payroll</div>
+                        <div class="card-body">
+                            <form onsubmit="runPayroll_(event)">
+                                <select name="empId" class="form-select mb-2" required>${empOptions}</select>
+                                <input type="number" name="year" class="form-control mb-2" placeholder="Year" required>
+                                <input type="number" name="month" class="form-control mb-2" placeholder="Month (1-12)" required>
+                                <input type="number" name="netPay" class="form-control mb-2" placeholder="Net Pay" required>
+                                <button class="btn btn-primary w-100">Generate</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-8">
+                                    <div class="card">
+                                        <div class="card-header">Payroll History</div>
+                                        <div class="table-responsive">
+                                        <table class="table mb-0" id="tPayroll">
+                                            <thead><tr><th>Payslip ID</th><th>Emp ID</th><th>Month/Year</th><th>Net Pay</th><th>Generated</th></tr></thead>
+                                            <tbody>${payrollRows}</tbody>
+                                        </table>
+                                        </div>
+                                    </div>                </div>
+            </div>`;
+        });
+    }
+
+    function runPayroll_(e) {
+        e.preventDefault();
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            if(r.success) loadPayroll();
+        }).generatePayroll(Object.fromEntries(new FormData(e.target)));
+    }
+
+    function loadLogs() {
+        document.getElementById('mainView').innerHTML='<div class="card"><div class="table-responsive"><table class="table" id="tLog"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead><tbody></tbody></table></div></div>';
+        google.script.run.withSuccessHandler(d=>{document.querySelector('#tLog tbody').innerHTML=d.reverse().map(l=>`<tr><td>${l.Timestamp}</td><td>${l.UserEmail}</td><td>${l.Action}</td><td>${l.Details}</td></tr>`).join('');}).getData('SystemLogs');
+    }
+
+    function loadUserGuide() {
+        document.getElementById('mainView').innerHTML = '<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading User Guide...</p></div>';
+        google.script.run.withSuccessHandler(html => {
+            document.getElementById('mainView').innerHTML = html;
+        }).include('user_guide');
+    }
+
+    let currentAttendanceData = [];
+
+function loadAttHistory(searchCriteria = null) {
+    let exportButton = '';
+    if (CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR' || CURRENT_USER.Role === 'ACCOUNTENT') {
+        exportButton = `<button class="btn btn-success btn-sm float-end" onclick="exportAttendance_()">Export to Sheet</button>`;
+    }
+
+    document.getElementById('mainView').innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                ${exportButton}
+                <form onsubmit="searchAttendance_(event)">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <input type="date" name="date" class="form-control">
+                        </div>
+                        <div class="col-md-4">
+                            <input type="text" name="name" class="form-control" placeholder="Employee Name">
+                        </div>
+                        <div class="col-md-4">
+                            <button class="btn btn-primary w-100">Search</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="card-body" id="attendanceTableContainer">
+                <div class="text-center">
+                    <div class="spinner-border text-primary"></div>
+                    <p class="text-muted mt-2">Loading History...</p>
+                </div>
+            </div>
+        </div>`;
+
+    const displayResults = (data) => {
+        currentAttendanceData = data; // Store data for export
+        let tableHtml = '<div class="alert alert-info">No records found.</div>';
+        if (data && data.length > 0) {
+            const isAdmin = CURRENT_USER.Role === 'ADMIN';
+            tableHtml = `
+            <div class="table-responsive">
+                <table class="table" id="tAtt">
+                    <thead><tr><th>Date</th><th>Name</th><th>Type</th><th>Time</th>${isAdmin ? '<th>Map</th>' : ''}</tr></thead>
+                    <tbody>
+                        ${data.reverse().map(l => `<tr><td>${l.Date}</td><td>${l.Name}</td><td><span class="badge ${l.Type === 'CheckIn' ? 'bg-success' : 'bg-danger'}">${l.Type}</span></td><td>${l.Time}</td>${isAdmin ? `<td>${l.MapLink ? `<a href="${l.MapLink}" target="_blank">Map</a>` : ''}</td>` : ''}</tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+        document.getElementById('attendanceTableContainer').innerHTML = tableHtml;
+    };
+
+    if (searchCriteria) {
+        google.script.run.withSuccessHandler(displayResults).searchAttendance(searchCriteria);
+    } else {
+        google.script.run.withSuccessHandler(displayResults).getAttendanceHistory();
+    }
+}
+
+function exportAttendance_() {
+    if (currentAttendanceData && currentAttendanceData.length > 0) {
+        showToast_("Exporting...", true);
+        google.script.run.withSuccessHandler(r => {
+            if (r.success) {
+                showToast_("Export successful!", true);
+                window.open(r.url, '_blank');
+            } else {
+                showToast_(r.msg, false);
+            }
+        }).exportAttendanceToSheet(currentAttendanceData);
+    } else {
+        showToast_("No data to export.", false);
+    }
+}
+
+
+function searchAttendance_(e) {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const searchCriteria = Object.fromEntries(formData.entries());
+    loadAttHistory(searchCriteria);
+}
+
+
+</script>

@@ -1,0 +1,52 @@
+<style>
+    /* THEME VARIABLES */
+    :root { 
+        --sidebar-bg: #003366; 
+        --primary-color: #004d99;
+        --sidebar-width: 250px;
+    }
+
+    body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; }
+
+    #wrapper { display: flex; }
+    
+    #sidebar-wrapper { 
+        position: fixed;
+        top: 0;
+        left: calc(-1 * var(--sidebar-width));
+        width: var(--sidebar-width); 
+        height: 100vh;
+        z-index: 1030;
+        background: var(--sidebar-bg);
+        display: flex; 
+        flex-direction: column; 
+        transition: left 0.3s ease;
+    }
+    
+    #page-content-wrapper { 
+        width: 100%;
+        transition: padding-left 0.3s ease;
+    }
+
+    #wrapper.toggled #sidebar-wrapper {
+        left: 0;
+    }
+
+    @media (min-width: 768px) {
+        #sidebar-wrapper { left: 0; }
+        #page-content-wrapper { padding-left: var(--sidebar-width); }
+
+        #wrapper.toggled #sidebar-wrapper { left: calc(-1 * var(--sidebar-width)); }
+        #wrapper.toggled #page-content-wrapper { padding-left: 0; }
+    }
+
+    .list-group-item:hover { background: rgba(255,255,255,0.1) !important; color: #fff !important; transform: translateX(5px); }
+    .list-group-item { transition: 0.2s; border: none; font-size: 0.95rem; }
+    
+    .card { border: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .table thead th { background: #f8f9fa; color: #555; font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }
+    
+    /* UTILS */
+    .bg-primary { background-color: var(--primary-color) !important; }
+    .btn-primary { background-color: var(--primary-color); border-color: var(--primary-color); }
+</style>

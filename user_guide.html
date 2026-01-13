@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HRMS User Guide</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; }
+        h1, h2, h3 { color: #333; }
+        .feature { border-left: 3px solid #007bff; padding-left: 15px; margin-bottom: 20px; }
+        .admin { border-left-color: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>HRMS User Guide</h1>
+    <p>This guide provides instructions on how to use the HRMS application.</p>
+
+    <h2>Getting Started</h2>
+    <p>To begin, you need to log in with the username and password provided by the HR department.</p>
+
+    <h2>Dashboard</h2>
+    <div class="feature">
+        <p>The dashboard is the first screen you see after logging in. It provides a quick overview of your status.</p>
+        <ul>
+            <li><b>Check-In/Check-Out:</b> You can mark your attendance for the day using the "Check In" and "Check Out" buttons.</li>
+            <li><b>Current Status:</b> The dashboard displays your current check-in time for the day.</li>
+        </ul>
+    </div>
+
+    <h2>Attendance</h2>
+    <div class="feature">
+        <p>The attendance page allows you to view attendance records.</p>
+        <ul>
+            <li><b>Your Attendance:</b> You can view your own attendance history.</li>
+            <li>
+                <div class="admin">
+                    <b>All Employee Attendance (Admin, HR, Accountant):</b> If you have Admin, HR, or Accountant roles, you can view the attendance records of all employees. You can also search for attendance by date and employee name, and export the data to a Google Sheet.
+                </div>
+            </li>
+        </ul>
+    </div>
+
+    <h2>Leave Management</h2>
+    <div class="feature">
+        <p>This section allows you to manage your leaves.</p>
+        <ul>
+            <li><b>Apply for Leave:</b> You can apply for leave by selecting the leave type, start date, and end date. The system will automatically calculate the number of working days, excluding holidays and non-working Saturdays.</li>
+            <li><b>Leave Balance:</b> Your current Casual Leave (CL) balance is displayed. CLs are accrued at a rate of 1.5 days per month, prorated based on the day of the month.</li>
+            <li><b>Leave Approval:</b> When you apply for leave, an email notification is sent to your manager for approval.</li>
+        </ul>
+    </div>
+
+    <h2>Profile Page</h2>
+    <div class="feature">
+        <p>The Profile page shows your personal and employment details stored in the system.</p>
+        <ul>
+            <li><b>User Details:</b> You can view your information such as name, employee ID, job title, department, and joining date.</li>
+            <li><b>Salary Information:</b> Please note that for privacy and security, your salary details are not displayed on this page.</li>
+        </ul>
+    </div>
+
+    <h2 class="admin">Admin Features</h2>
+    <p>These features are only available to users with the "Admin" role.</p>
+    
+    <div class="feature admin">
+        <h3>System Logs</h3>
+        <p>View system-level logs and activities.</p>
+    </div>
+
+    <div class="feature admin">
+        <h3>Accrue Monthly Leave</h3>
+        <p>Manually trigger the process to accrue monthly leaves for all employees.</p>
+    </div>
+
+    <div class="feature admin">
+        <h3>Apply Yearly Carry-over</h3>
+        <p>Initiate the process to carry over remaining leaves from the previous year to the new year.</p>
+    </div>
+    
+    <h2>My Documents & HR Documents</h2>
+    <p>These sections are for document management. They are currently under development.</p>
+
+</body>
+</html>
