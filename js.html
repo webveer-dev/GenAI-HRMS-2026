@@ -37,7 +37,7 @@
             CURRENT_USER = user;
             document.getElementById('userNameDisplay').textContent = user.Name.split(" ")[0];
             document.getElementById('roleBadge').textContent = user.Role;
-            document.getElementById('versionBadge').textContent = 'v2.1.0';
+            document.getElementById('versionBadge').textContent = 'v2.1.9';
             renderMenu_();
             
             // Router Init
@@ -56,7 +56,24 @@
 
         switch(page) {
             case 'dashboard': loadDashboard(); break;
-            case 'attendance': loadAttHistory(); break;
+            case 'attendance':
+                if (CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR' || CURRENT_USER.Role === 'ACCOUNTENT') {
+                    loadAttendanceAdminPage();
+                } else {
+                    loadAttendanceUserPage();
+                }
+                break;
+            case 'attendance_user':
+                loadAttendanceUserPage();
+                break;
+            case 'attendance_admin':
+                if (CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR' || CURRENT_USER.Role === 'ACCOUNTENT') {
+                    loadAttendanceAdminPage();
+                } else {
+                    showToast_('Access Denied', false);
+                    loadDashboard();
+                }
+                break;
             case 'profile': loadProfile(); break;
             case 'leaves': loadLeaves(); break;
             case 'holidays': loadHolidays(); break;
@@ -68,6 +85,7 @@
             case 'payroll': loadPayroll(); break;
             case 'logs': loadLogs(); break;
             case 'user_guide': loadUserGuide(); break;
+            case 'settings': loadSettings(); break;
             default: loadDashboard();
         }
     }
@@ -76,10 +94,12 @@
         const m = document.getElementById('sidebarMenu');
         const lnk = (id, icn, txt) => `<a href="#" onclick="router_(event, '${id}', '${txt}')" class="list-group-item list-group-item-action bg-transparent text-light"><i class="bi bi-${icn} me-3"></i>${txt}</a>`;
         const actionLnk = (action, icn, txt) => `<a href="#" onclick="event.preventDefault(); ${action}" class="list-group-item list-group-item-action bg-transparent text-light"><i class="bi bi-${icn} me-3"></i>${txt}</a>`;
-        let h = lnk('dashboard','speedometer2','Dashboard') + lnk('profile','person-circle','My Profile') + lnk('attendance','calendar-check','Attendance') + lnk('leaves','calendar2-heart','Leaves') + lnk('holidays', 'calendar-event', 'Holidays') + lnk('announcements', 'megaphone', 'Announcements') + lnk('user_guide', 'info-circle', 'User Guide');
+        let h = lnk('dashboard','speedometer2','Dashboard') + lnk('profile','person-circle','My Profile') + lnk('attendance_user','calendar-check','My Attendance') + lnk('leaves','calendar2-heart','Leaves') + lnk('holidays', 'calendar-event', 'Holidays') + lnk('announcements', 'megaphone', 'Announcements') + lnk('user_guide', 'info-circle', 'User Guide');
         
         if(CURRENT_USER.Role === 'ADMIN' || CURRENT_USER.Role === 'HR') {
             h += `<div class="sidebar-heading small text-white-50 px-3 mt-3">ADMINISTRATION</div>` + lnk('employees','people-fill','Employees') + lnk('assets', 'box', 'Assets') + lnk('payroll', 'cash-stack', 'Payroll');
+            // Admins get a direct link to the full Attendance admin view
+            h += lnk('attendance_admin','calendar-check','Attendance (Admin)');
         }
 
         if(CURRENT_USER.Role === 'ADMIN') {
@@ -87,11 +107,64 @@
                  lnk('documents', 'file-earmark', 'My Documents') + 
                  lnk('hrforms', 'file-text', 'HR Forms') +
                  lnk('logs','activity','System Logs') + 
+                 lnk('settings', 'gear', 'Settings') +
                  actionLnk('accrueMonthlyLeave_()', 'calendar-plus', 'Accrue Monthly Leave') +
                  actionLnk('applyYearlyCarryOver_()', 'box-arrow-down', 'Apply Yearly Carry-over');
         }
 
         m.innerHTML = h;
+    }
+function loadSettings() {
+        if (CURRENT_USER.Role !== 'ADMIN') {
+            document.getElementById('mainView').innerHTML = '<div class="alert alert-danger">Access Denied</div>';
+            return;
+        }
+        document.getElementById('mainView').innerHTML = `<div class="text-center mt-5"><div class="spinner-border text-primary"></div><p class="text-muted mt-2">Loading Settings...</p></div>`;
+
+        google.script.run.withSuccessHandler(settings => {
+            const saturdayWorkSetting = settings.find(s => s.Setting === 'SaturdayWork');
+            const saturdayWorkValue = saturdayWorkSetting ? saturdayWorkSetting.Value : '2nd_4th_non_working';
+
+            document.getElementById('mainView').innerHTML = `
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card shadow-sm">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0">Settings</h5>
+                        </div>
+                        <div class="card-body">
+                            <form onsubmit="saveSettings_(event)">
+                                <div class="mb-3">
+                                    <label for="saturdayWork" class="form-label">Saturday Working Policy</label>
+                                    <select id="saturdayWork" name="SaturdayWork" class="form-select">
+                                        <option value="2nd_4th_non_working" ${saturdayWorkValue === '2nd_4th_non_working' ? 'selected' : ''}>2nd and 4th Saturdays are non-working</option>
+                                        <option value="all_working" ${saturdayWorkValue === 'all_working' ? 'selected' : ''}>All Saturdays are working</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Save Settings</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }).getData('Settings');
+    }
+
+    function saveSettings_(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button');
+        btn.disabled = true;
+        btn.innerHTML = 'Saving...';
+        const formData = new FormData(e.target);
+        const settings = Object.fromEntries(formData.entries());
+        google.script.run.withSuccessHandler(r => {
+            showToast_(r.msg, r.success);
+            btn.disabled = false;
+            btn.innerHTML = 'Save Settings';
+            if (r.success) {
+                loadSettings();
+            }
+        }).updateSettings(settings);
     }
 
     function accrueMonthlyLeave_() {
@@ -226,6 +299,10 @@
     }
 
     function loadProfile() {
+        const maxDate = new Date();
+        maxDate.setFullYear(maxDate.getFullYear() - 18);
+        const maxDateString = maxDate.toISOString().split('T')[0];
+
         document.getElementById('mainView').innerHTML = `
         <div class="row justify-content-center">
             <div class="col-md-8">
@@ -254,11 +331,11 @@
                                 </div>
                                 <div class="col-md-6">
                                     <label for="mobile" class="form-label">Mobile Number</label>
-                                    <input type="tel" id="mobile" name="mobile" class="form-control" value="${CURRENT_USER.Mobile || ''}" required>
+                                    <input type="tel" id="mobile" name="mobile" class="form-control" value="${CURRENT_USER.Mobile || ''}" required pattern="[0-9]{10}" title="Please enter a 10-digit mobile number">
                                 </div>
                                 <div class="col-md-6">
                                     <label for="dob" class="form-label">Date of Birth</label>
-                                    <input type="date" id="dob" name="dob" class="form-control" value="${CURRENT_USER.DOB || ''}" required>
+                                    <input type="date" id="dob" name="dob" class="form-control" value="${CURRENT_USER.DOB || ''}" required max="${maxDateString}">
                                 </div>
                             </div>
                             <button type="submit" class="btn btn-primary mt-4">Save Changes</button>
@@ -537,7 +614,8 @@
         </div>`;
         
         google.script.run.withSuccessHandler(d => {
-             document.getElementById('announcementList').innerHTML = d.reverse().map(a => {
+             // d is array with Date as yyyy-MM-dd
+             const listHtml = d.reverse().map(a => {
                  return `<div class="list-group-item">
                             <div class="d-flex w-100 justify-content-between">
                                 <h5 class="mb-1">${a.Title}</h5>
@@ -547,6 +625,21 @@
                             <small>Posted by: ${a.PostedBy}</small>
                          </div>`;
              }).join('');
+
+             document.getElementById('announcementList').innerHTML = listHtml;
+
+             try {
+                 const sorted = d.slice().sort((x,y) => x.Date > y.Date ? 1 : -1);
+                 const latestDate = sorted.length ? sorted[sorted.length-1].Date : null;
+                 const lastSeen = localStorage.getItem('lastAnnouncementSeen');
+                 if (latestDate && (!lastSeen || lastSeen < latestDate)) {
+                     const newCount = d.filter(a => !lastSeen || a.Date > lastSeen).length;
+                     if (newCount > 0) showToast_(`${newCount} new announcement(s)`, true);
+                 }
+                 // mark as seen when user opened the announcements page
+                 if (latestDate) localStorage.setItem('lastAnnouncementSeen', latestDate);
+             } catch(e) { /* ignore localStorage errors */ }
+
         }).getData('Announcements');
     }
 
@@ -570,10 +663,10 @@
 
                 const pendingCLDays = myLeaves
                     .filter(l => l.Status === 'Pending' && l.Type.includes('Casual'))
-                    .reduce((acc, l) => acc + l.Days, 0);
+                    .reduce((acc, l) => acc + (parseFloat(l.Days) || 0), 0);
 
-                let adjustedCL = (CURRENT_USER.BalCL || 0) - pendingCLDays;
-                adjustedCL = Math.round(adjustedCL * 100) / 100;
+                const actualCL = Math.round((CURRENT_USER.BalCL || 0) * 100) / 100;
+                const availableCL = Math.round((actualCL - pendingCLDays) * 100) / 100;
 
                 const myLeavesRows = myLeaves.reverse().map(l => {
                      return `<tr><td>${l.Type}<br><small>${l.Name}</small></td><td>${l.StartDate} to ${l.EndDate}</td><td><span class="badge bg-secondary">${l.Status}</span></td><td>${l.Days}</td></tr>`;
@@ -600,7 +693,7 @@
 
                 document.getElementById('mainView').innerHTML = `
                 <div class="row mb-4 g-3 text-center">
-                    <div class="col-3"><div class="card bg-success text-white p-2">CL <h3>${adjustedCL}</h3></div></div>
+                    <div class="col-3"><div class="card bg-success text-white p-2">CL <h5>Actual: ${actualCL}</h5><h3>Available: ${availableCL}</h3></div></div>
                     <div class="col-3"><div class="card bg-info text-white p-2">SL <h3>${CURRENT_USER.BalSL||0}</h3></div></div>
                     <div class="col-3"><div class="card bg-warning p-2">PL <h3>${CURRENT_USER.BalPat||0}</h3></div></div>
                     <div class="col-3"><div class="card bg-danger text-white p-2">ML <h3>${CURRENT_USER.BalMat||0}</h3></div></div>
@@ -666,13 +759,19 @@
             }
             leaveDaysDisplay.classList.remove('alert-danger');
             leaveDaysDisplay.classList.add('alert-info');
-            google.script.run.withSuccessHandler(days => {
+            google.script.run.withSuccessHandler(info => {
                 leaveDaysDisplay.style.display = 'block';
-                leaveDaysDisplay.innerText = `This will deduct ${days} working days.`;
-                if (days > 0) {
+                // Respect session (half day) selection
+                const session = form.querySelector('select[name="session"]').value;
+                const displayDays = (session !== 'Full Day') ? 0.5 : info.days;
+                leaveDaysDisplay.innerHTML = `This will deduct <b>${displayDays}</b> working days.`;
+                if (info.excludedCount && info.excludedCount > 0) {
+                    leaveDaysDisplay.innerHTML += ` <small class="d-block text-muted">Note: ${info.excludedCount} non-working day(s) excluded: ${info.excludedDates.join(', ')}</small>`;
+                }
+                if (displayDays > 0) {
                     sendLeaveBtn.disabled = false;
                 }
-            }).calculateLeaveDays(startDate, endDate);
+            }).calculateLeaveDaysDetailed(startDate, endDate);
         } else {
             leaveDaysDisplay.style.display = 'none';
         }
@@ -702,6 +801,11 @@
 
         const p1 = new Promise(r => google.script.run.withSuccessHandler(r).getData('Employees'));
 
+        // DOB max-date for 18+ restriction in new employee form
+        const maxDate = new Date();
+        maxDate.setFullYear(maxDate.getFullYear() - 18);
+        const maxDateString = maxDate.toISOString().split('T')[0];
+
         p1.then(employees => {
             const empRows = employees.map(r => `<tr><td>${r.EmpID}</td><td>${r.Name}</td><td>${r.Email}</td><td>${r.BalCL}/${r.BalSL}</td></tr>`).join('');
             const managerOptions = employees.map(r => `<option value="${r.EmpID}">${r.Name}</option>`).join('');
@@ -712,16 +816,17 @@
                 <div class="card-body table-responsive"><table class="table" id="tEmp"><thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Bal(CL/SL)</th></tr></thead><tbody>${empRows}</tbody></table></div>
             </div>
             <div class="modal fade" id="mdlEmp"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5>New Employee</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body"><form onsubmit="saveEmp_(event)">
+                    <div class="modal-body"><form onsubmit="saveEmp_(event)">
                 <div class="row g-2">
                     <div class="col-6"><input name="empId" class="form-control" placeholder="ID" required></div>
                     <div class="col-6"><input name="name" class="form-control" placeholder="Name" required></div>
                     <div class="col-12"><input name="email" type="email" class="form-control" placeholder="Google Email" required></div>
                     <div class="col-6"><select name="role" class="form-select"><option>USER</option><option>ADMIN</option><option>HR</option></select></div>
-                    <div class="col-6"><input name="mobile" class="form-control" placeholder="Mobile"></div>
+                    <div class="col-6"><input name="mobile" type="tel" pattern="[0-9]{10}" title="Please enter a 10-digit mobile number" class="form-control" placeholder="Mobile" required></div>
                     <div class="col-6"><input name="dept" class="form-control" placeholder="Department"></div>
                     <div class="col-6"><input name="desig" class="form-control" placeholder="Designation"></div>
                     <div class="col-6"><label class="form-label small">DOJ</label><input name="doj" type="date" class="form-control" required></div>
+                    <div class="col-6"><label class="form-label small">DOB</label><input name="dob" type="date" class="form-control" max="${maxDateString}" required></div>
                     <div class="col-6"><label class="form-label small">Manager</label><select name="managerId" class="form-select">${managerOptions}</select></div>
                 <button class="btn btn-primary w-100 mt-3">Create</button></div></form></div></div></div></div>`;
         });
@@ -949,6 +1054,17 @@ function searchAttendance_(e) {
     const formData = new FormData(e.target);
     const searchCriteria = Object.fromEntries(formData.entries());
     loadAttHistory(searchCriteria);
+}
+
+// Separate page loaders to present distinct Attendance pages for Users and Admins
+function loadAttendanceUserPage() {
+    document.getElementById('pageTitle').innerText = 'My Attendance';
+    loadAttHistory(); // getAttendanceHistory() will return only the current user's records
+}
+
+function loadAttendanceAdminPage() {
+    document.getElementById('pageTitle').innerText = 'Attendance (Admin)';
+    loadAttHistory(); // admin will see all records and get export controls
 }
 
 

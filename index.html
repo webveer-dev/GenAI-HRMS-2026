@@ -49,9 +49,11 @@
                 <div class="list-group list-group-flush my-3" id="sidebarMenu"></div>
                 <div class="mt-auto p-3 border-top border-secondary bg-black bg-opacity-25">
                     <small class="text-white-50 d-block">Logged in as</small>
-                    <span id="userNameDisplay" class="fw-bold d-block text-truncate">User</span>
-                    <span id="roleBadge" class="badge bg-primary">...</span>
-                    <span id="versionBadge" class="badge bg-secondary">...</span>
+                    <span id="userNameDisplay" class="fw-bold d-block text-truncate" style="max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">User</span>
+                    <div class="d-flex gap-1 mt-1" style="flex-wrap:nowrap;overflow-x:auto;">
+                        <span id="roleBadge" class="badge bg-primary flex-shrink-0">...</span>
+                        <span id="versionBadge" class="badge bg-secondary flex-shrink-0">...</span>
+                    </div>
                 </div>
             </div>
 

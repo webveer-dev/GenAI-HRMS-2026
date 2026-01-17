@@ -79,16 +79,95 @@ function getActiveUserContext() {
   } catch (e) { return { error: "System Error: " + e.message }; }
 }
 
+/**
+ * Gets attendance history for the current user.
+ * Called from attendance-user.html
+ */
+function getUserAttendanceHistory() {
+    const user = getActiveUserContext();
+    if (user.error) {
+        console.error("getUserAttendanceHistory Error:", user.error);
+        return [];
+    }
+    const attendance = getData('Attendance');
+    return attendance.filter(rec => rec.EmpID === user.EmpID);
+}
+
+/**
+ * Gets aggregated attendance data for the admin dashboard for a specific date.
+ * Called from attendance-admin.html
+ */
+function getAdminAttendanceData(dateString) {
+    try {
+        const user = getActiveUserContext();
+        if (user.error || (user.Role !== 'ADMIN' && user.Role !== 'HR')) {
+            return { success: false, message: "Unauthorized" };
+        }
+
+        const allAttendance = getData('Attendance');
+        const dailyAttendance = allAttendance.filter(rec => rec.Date === dateString);
+
+        // 1. Map Data
+        const mapData = [['Lat', 'Lng', 'Name']];
+        dailyAttendance.forEach(rec => {
+            if (rec.Lat && rec.Lng) {
+                mapData.push([parseFloat(rec.Lat), parseFloat(rec.Lng), `${rec.Name} (${rec.Type})`]);
+            }
+        });
+
+        // 2. Hours Data & Logs
+        const employeeHours = {};
+        const logs = [];
+        dailyAttendance.forEach(rec => {
+            if (!employeeHours[rec.EmpID]) {
+                employeeHours[rec.EmpID] = { name: rec.Name, in: null, out: null };
+            }
+            if (rec.Type === 'CheckIn') employeeHours[rec.EmpID].in = new Date(`${rec.Date}T${rec.Time}`);
+            if (rec.Type === 'CheckOut') employeeHours[rec.EmpID].out = new Date(`${rec.Date}T${rec.Time}`);
+            logs.push({ empId: rec.EmpID, name: rec.Name, type: rec.Type === 'CheckIn' ? 'IN' : 'OUT' });
+        });
+
+        const hoursData = [['Employee', 'Hours']];
+        for (const empId in employeeHours) {
+            const emp = employeeHours[empId];
+            if (emp.in && emp.out) {
+                const diffMs = emp.out - emp.in;
+                const hours = diffMs / 3600000; // Convert ms to hours
+                hoursData.push([emp.name, hours]);
+            }
+        }
+
+        return { success: true, mapData, hoursData, logs };
+    } catch (e) {
+        return { success: false, message: e.message };
+    }
+}
+
+/**
+ * Gets the detailed check-in/out log for a single employee on a given day.
+ * Called from attendance-admin.html modal.
+ */
+function getEmployeeDailyDetails(empId, dateString) {
+    const allAttendance = getData('Attendance');
+    return allAttendance.filter(rec => rec.EmpID === empId && rec.Date === dateString)
+                        .map(rec => ({ type: rec.Type === 'CheckIn' ? 'IN' : 'OUT', time: rec.Time, lat: rec.Lat, lng: rec.Lng }));
+}
+
 function getAttendanceHistory() {
     const user = getActiveUserContext();
     if (user.error) return [];
 
     const attendance = getData('Attendance');
-    if (user.Role === 'ADMIN' || user.Role === 'HR' || user.Role === 'ACCOUNTENT') {
-        return attendance;
-    }
+  const adminRoles = ['ADMIN', 'HR', 'ACCOUNTENT'];
+  const role = (user.Role || '').toUpperCase().trim();
 
-    return attendance.filter(rec => rec.EmpID === user.EmpID);
+  if (adminRoles.includes(role)) {
+    logAction_('Attendance Access', `User ${user.Email} with role ${role} accessed all attendance records.`);
+    return attendance;
+  }
+
+  // Default: return only records for the logged-in employee
+  return attendance.filter(rec => String(rec.EmpID) === String(user.EmpID));
 }
 
 function getTodaysAttendance() {
@@ -237,6 +316,25 @@ function calculateLeaveDays(startDate, endDate) {
         currentDate.setDate(currentDate.getDate() + 1);
     }
     return leaveDays;
+}
+
+// Returns details about leave calculation: days counted, excluded dates (weekends/holidays)
+function calculateLeaveDaysDetailed(startDate, endDate) {
+  let leaveDays = 0;
+  let excluded = [];
+  let currentDate = new Date(startDate);
+  const stopDate = new Date(endDate);
+  const allHolidays = getData('Holidays').map(h => h.Date);
+
+  while (currentDate <= stopDate) {
+    if (!isWeekendOrHoliday_(currentDate, allHolidays)) {
+      leaveDays++;
+    } else {
+      excluded.push(Utilities.formatDate(new Date(currentDate), "Asia/Kolkata", "yyyy-MM-dd"));
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return { days: leaveDays, excludedCount: excluded.length, excludedDates: excluded };
 }
 
 
@@ -448,6 +546,16 @@ function approveLeave(reqId) {
 
     lSheet.getRange(leaveRow, statusIndex + 1).setValue('Approved');
     logAction_('Leave Approve', `Approved ${reqId} by ${approver.Email}`);
+    // Send notification to requester about approval
+    try {
+      const requesterEmail = requester && requester.Email ? requester.Email : null;
+      if (requesterEmail) {
+        const subject = `Leave Approved: ${reqId}`;
+        const body = `${approver.Name || approver.Email} has approved your leave request (${reqId}).\n\nType: ${type}\nDays: ${days}`;
+        MailApp.sendEmail(requesterEmail, subject, body, { name: 'HRMS (No-Reply)'});
+      }
+    } catch(e) { logAction_('Email Failed', `Approval notification failed for ${reqId}: ${e.message}`); }
+
     return {success: true, msg: "Leave Approved & Balance Deducted"};
 }
 
@@ -459,10 +567,25 @@ function createEmployee(form) {
   if (employees.some(e => e.Email.toLowerCase() === form.email.toLowerCase())) {
     return {success: false, msg: "Employee with this email already exists."};
   }
+  // Basic validation for mobile and DOB
+  if (!form.mobile || !form.dob) {
+    return {success: false, msg: "Mobile number and DOB are required."};
+  }
+
+  if (!/^\d{10}$/.test(form.mobile)) {
+    return {success: false, msg: "Invalid mobile number. Please enter a 10-digit number."};
+  }
+
+  const dob = new Date(form.dob);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+  if (age < 18) return {success: false, msg: "Employee must be at least 18 years old."};
 
   const sheet = SpreadsheetApp.openById(getDbId_()).getSheetByName('Employees');
   // Add with 0 CL balance and set LastBalanceUpdate to DOJ for pro-rata calculation
-  sheet.appendRow([form.empId, form.name, form.email, form.role, form.dept, form.desig, form.doj, form.mobile, 'Active', 0, 7, 0, 0, form.doj, form.managerId]);
+  sheet.appendRow([form.empId, form.name, form.email, form.role, form.dept, form.desig, form.doj, form.dob, form.mobile, 'Active', 0, 7, 0, 0, form.doj, form.managerId]);
   logAction_('Add Emp', form.name);
   return {success: true, msg: "Employee Added"};
 }
@@ -473,6 +596,23 @@ function updateUserProfile(data) {
 
   if (!data.mobile || !data.dob) {
     return {success: false, msg: "Mobile number and DOB are required."};
+  }
+
+  // Mobile number validation (10 digits)
+  if (!/^\d{10}$/.test(data.mobile)) {
+    return {success: false, msg: "Invalid mobile number. Please enter a 10-digit number."};
+  }
+
+  // DOB validation (at least 18 years old)
+  const dob = new Date(data.dob);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+  if (age < 18) {
+    return {success: false, msg: "You must be at least 18 years old."};
   }
 
   try {
@@ -525,6 +665,18 @@ function createAnnouncement(form) {
   const sheet = SpreadsheetApp.openById(getDbId_()).getSheetByName('Announcements');
   sheet.appendRow([new Date(), form.title, form.message, user.Name]);
   logAction_('Announcement Post', form.title);
+
+    // Notify all employees via email about the announcement
+    try {
+      const employees = getData('Employees');
+      const subject = `Announcement: ${form.title}`;
+      const htmlBody = `<p>Hi,</p><p>${form.message}</p><p>Posted by: ${user.Name}</p>`;
+      employees.forEach(e => {
+        try { if (e.Email) MailApp.sendEmail(e.Email, subject, '', { htmlBody: htmlBody, name: 'HRMS (No-Reply)' }); } catch(ignore) {}
+      });
+    } catch(e) {
+      logAction_('Announcement Email Failed', e.message);
+    }
   return {success: true, msg: "Announcement Posted"};
 }
 
@@ -741,4 +893,39 @@ function getDashboardStats() {
     logs: logs.reverse().slice(0, 10),
     announcements: ann.reverse().slice(0, 5)
   };
+}
+
+function updateSettings(settings) {
+  const user = getActiveUserContext();
+  if (user.error || user.Role !== 'ADMIN') {
+    return {success: false, msg: "Unauthorized"};
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(getDbId_());
+    const sheet = ss.getSheetByName('Settings');
+    const data = sheet.getDataRange().getValues();
+    const headers = data.shift();
+    const settingIndex = headers.indexOf('Setting');
+    const valueIndex = headers.indexOf('Value');
+
+    for (const key in settings) {
+      let found = false;
+      for (let i = 0; i < data.length; i++) {
+        if (data[i][settingIndex] === key) {
+          sheet.getRange(i + 2, valueIndex + 1).setValue(settings[key]);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        sheet.appendRow([key, settings[key]]);
+      }
+    }
+    logAction_('Settings Update', `User ${user.Email} updated settings.`);
+    return {success: true, msg: "Settings updated successfully!"};
+  } catch (e) {
+    logAction_('Settings Update Error', e.message);
+    return {success: false, msg: "An error occurred while updating settings: " + e.message};
+  }
 }

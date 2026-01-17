@@ -61,7 +61,8 @@ function setupSystem() {
     'Documents': ['DocID', 'EmpID', 'DocumentType', 'FileName', 'FileURL', 'UploadDate'],
     'DocumentTemplates': ['TemplateID', 'Title', 'Content'],
     'GeneratedDocuments': ['GeneratedDocID', 'TemplateID', 'EmpID', 'Status', 'CreatedDate', 'ApprovedDate', 'Data', 'FileURL'],
-    'Holidays': ['Date', 'Title', 'Type']
+    'Holidays': ['Date', 'Title', 'Type'],
+    'Settings': ['Setting', 'Value']
   };
 
   if (isNewSheet) {
@@ -91,6 +92,10 @@ function setupSystem() {
     // Initial Log
     ss.getSheetByName('SystemLogs').appendRow([new Date(), 'System', 'Setup', 'Database Initialized', 'Server']);
     ss.getSheetByName('Announcements').appendRow([new Date(), 'Welcome', 'Welcome to WebVeer HRMS.', 'System']);
+    
+    // Initial Settings
+    const settingsSheet = ss.getSheetByName('Settings');
+    settingsSheet.appendRow(['SaturdayWork', '2nd_4th_non_working']);
   }
 
   return { success: true, url: ss.getUrl() };
@@ -314,12 +319,19 @@ function isWeekendOrHoliday_(date, holidays) {
     const day = date.getDay();
     if (day === 0) return true; // Sunday is a holiday
 
+    const settings = getData('Settings');
+    const saturdayWorkSetting = settings.find(s => s.Setting === 'SaturdayWork');
+
     if (day === 6) { // Saturday
-        const weekOfMonth = Math.ceil(date.getDate() / 7);
-        if (weekOfMonth === 1 || weekOfMonth === 3) {
-            return true; // 1st and 3rd Saturdays are holidays
+        if (saturdayWorkSetting && saturdayWorkSetting.Value === 'all_working') {
+            return false; // All Saturdays are working
+        } else { // Default behavior: 2nd and 4th are holidays
+            const weekOfMonth = Math.ceil(date.getDate() / 7);
+            if (weekOfMonth === 2 || weekOfMonth === 4) {
+                return true; // 2nd and 4th Saturdays are holidays
+            }
+            return false; // 1st, 3rd, and 5th Saturdays are working
         }
-        return false; // 2nd, 4th, and 5th Saturdays are working
     }
 
     const dateString = Utilities.formatDate(date, "Asia/Kolkata", "yyyy-MM-dd");
